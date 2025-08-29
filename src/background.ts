@@ -102,12 +102,8 @@ const createSettingsWindow = async () => {
  
   settingsWin.on('close', (event) => {
     // @ts-ignore
-    if (!app.isQuitting) {
-      event.preventDefault();
-      if (settingsWin) {
-        settingsWin.hide();
-      }
-    }
+     app.isQuitting = true;
+     app.quit();
   });
 
   settingsWin.on('closed', () => {
