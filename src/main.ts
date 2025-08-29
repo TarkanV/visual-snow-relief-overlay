@@ -6,7 +6,9 @@ import App from './App.vue';
 
 Vue.config.productionTip = false;
 
+// RESTORED: This line is required again because App.vue uses the component.
 Vue.component('vue-draggable-resizable', VueDraggableResizable);
+
 Vue.use(Toasted, {
   position: 'bottom-center',
   theme: 'outline',

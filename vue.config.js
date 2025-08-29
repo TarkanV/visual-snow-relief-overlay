@@ -8,6 +8,7 @@ module.exports = {
   },
   pluginOptions: {
     electronBuilder: {
+      mainProcessFile: 'src/background.ts',
       preload: 'src/preload.ts',
       builderOptions: {
         appId: 'com.belvederef.vs-overlay',

@@ -1,3 +1,4 @@
+/* eslint-disable prettier/prettier */
 'use strict';
 
 import {
@@ -8,26 +9,33 @@ import {
   globalShortcut,
   shell,
   screen,
+  Tray,
+  Menu,
 } from 'electron';
 import { createProtocol } from 'vue-cli-plugin-electron-builder/lib';
 import installExtension, { VUEJS_DEVTOOLS } from 'electron-devtools-installer';
 import { autoUpdater } from 'electron-updater';
 import * as path from 'path';
-import { IpcMainInvokeEvent } from 'electron/main';
+
+declare const __static: string;
+
+let overlayWins: BrowserWindow[] = [];
+let settingsWin: BrowserWindow | null = null;
+let tray: Tray | null = null;
+
+// @ts-ignore
+app.isQuitting = false;
 
 const isDevelopment = process.env.NODE_ENV !== 'production';
 
 let oldKeyboardShortcut: string | null = null;
 let keyBindDialog: BrowserWindow | null = null;
+let currentOpacity = 8;
 
-// Scheme must be registered before the app is ready
 protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { secure: true, standard: true } },
 ]);
 
-// Use pluginOptions.nodeIntegration, leave this alone
-// See nklayman.github.io/vue-cli-plugin-electron-builder/guide/security.html#node-integration for more info
-const nodeIntegration = (process.env.ELECTRON_NODE_INTEGRATION as unknown) as boolean;
 const preloadPath = path.join(app.getAppPath(), 'preload.js');
 
 const loadWinUrl = async (win: BrowserWindow, path: string) => {
@@ -37,243 +45,264 @@ const loadWinUrl = async (win: BrowserWindow, path: string) => {
   await win.loadURL(`${baseScheme}${path}`);
 };
 
-const wins: BrowserWindow[] = [];
-
-const createWindow = async (
-  display: Electron.Display,
-  onReadyCb: (w: BrowserWindow) => Promise<void> = async () => {},
-) => {
-  // Create the browser window.
+const createOverlayWindow = async (display: Electron.Display) => {
   const win = new BrowserWindow({
+    x: display.bounds.x,
+    y: display.bounds.y,
+    width: display.size.width,
+    height: display.size.height - 4,
     transparent: true,
     frame: false,
     hasShadow: false,
-    // @ts-ignore global var
-    icon: path.join(__static, 'icon.png'),
+    skipTaskbar: true,
+    resizable: false,
     webPreferences: {
-      nodeIntegration,
-      // contextIsolation: true,
+      nodeIntegration: true,
+      contextIsolation: false,
       preload: preloadPath,
     },
   });
-  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  win.setAlwaysOnTop(true, 'screen-saver');
-  win.setPosition(display.bounds.x, display.bounds.y);
-  win.setSize(display.size.width, display.size.height);
-  const waitForShow = new Promise(resolve => {
-    win.once('ready-to-show', async () => {
-      await onReadyCb(win);
-      resolve(true);
-    });
+
+  win.setAlwaysOnTop(true, 'screen-saver', 2);
+  win.setIgnoreMouseEvents(true);
+  win.setVisibleOnAllWorkspaces(true, 
+    { visibleOnFullScreen: true }
+  );
+
+  await loadWinUrl(win, 'overlay.html');
+  overlayWins.push(win);
+  win.on('closed', () => {
+    overlayWins = overlayWins.filter(overlay => overlay !== win);
   });
-  await loadWinUrl(win, `index.html?monitor-idx=${wins.length + 1}`);
-  await waitForShow;
-  wins.push(win);
 };
 
-const setIgnoreMouseEvents = (ignore: boolean = true) => {
-  wins.forEach(w => w.setIgnoreMouseEvents(ignore));
+const createSettingsWindow = async () => {
+  settingsWin = new BrowserWindow({
+    width: 602,
+    height: 604,
+    // @ts-ignore
+    icon: path.join(__static, 'icon.png'),
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false,
+      preload: preloadPath,
+    },
+    frame: false,
+    transparent: false,
+    skipTaskbar: true,
+    resizable: false,
+    alwaysOnTop : true,
+    // --- THIS IS THE FIX (PART 1) ---
+    // Start the window hidden. It will be shown later if needed.
+    show: false,
+  });
+
+  settingsWin.removeMenu();
+  await loadWinUrl(settingsWin, 'index.html').catch(e => console.error(e));
+ 
+  settingsWin.on('close', (event) => {
+    // @ts-ignore
+    if (!app.isQuitting) {
+      event.preventDefault();
+      if (settingsWin) {
+        settingsWin.hide();
+      }
+    }
+  });
+
+  settingsWin.on('closed', () => {
+    settingsWin = null;
+  });
+};
+
+const createTray = () => {
+  // @ts-ignore
+  tray = new Tray(path.join(__static, 'icon.png'));
+  tray.setToolTip('Visual Snow Relief Overlay');
+
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: 'Show Settings',
+      click: () => {
+        if (settingsWin) {
+          settingsWin.show();
+        }
+      },
+    },
+    {
+      label: 'Quit',
+      click: () => {
+        // @ts-ignore
+        app.isQuitting = true;
+        app.quit();
+      },
+    },
+  ]);
+
+  tray.setContextMenu(contextMenu);
+  tray.on('click', () => {
+    if (settingsWin) {
+      settingsWin.show();
+    }
+  });
 };
 
 const createKeybindDialog = async () => {
-  if (keyBindDialog) return;
-  const primaryWindow = wins[0];
+  if (keyBindDialog || !settingsWin) return;
   keyBindDialog = new BrowserWindow({
     width: 300,
     height: 150,
     modal: true,
     frame: true,
-    parent: primaryWindow,
+    parent: settingsWin,
     webPreferences: {
-      nodeIntegration,
+      nodeIntegration: true,
+      contextIsolation: false,
       preload: preloadPath,
     },
   });
   const { width: primaryDisplayWidth } = screen.getPrimaryDisplay().bounds;
-  // We do this for Linux, because it can't be on top so we kinda make sure it's not below
   keyBindDialog.setPosition(primaryDisplayWidth - keyBindDialog.getSize()[0] - 100, 100);
-  // it's on top but it can't be on top of a non-focusable window in Linux
   keyBindDialog.setAlwaysOnTop(true, 'screen-saver');
   keyBindDialog.removeMenu();
-  keyBindDialog.once('ready-to-show', () => {
-    keyBindDialog!.focus();
-    keyBindDialog!.show();
-    setIgnoreMouseEvents(true);
-  });
-  keyBindDialog.once('close', () => {
-    setIgnoreMouseEvents(false);
-    keyBindDialog = null;
-  });
+  keyBindDialog.once('close', () => { keyBindDialog = null; });
   loadWinUrl(keyBindDialog, 'keybind_dialog.html');
 };
 
-// Quit when all windows are closed.
 app.on('window-all-closed', () => {
-  // On macOS it is common for applications and their menu bar
-  // to stay active until the user quits explicitly with Cmd + Q
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
+  if (process.platform !== 'darwin') app.quit();
 });
 
 app.on('activate', async () => {
-  // On macOS it's common to re-create a window in the app when the
-  // dock icon is clicked and there are no other windows open.
-  if (BrowserWindow.getAllWindows().length === 0) {
-    for (const display of screen.getAllDisplays()) {
-      await createWindow(display);
-    }
+  if (settingsWin === null) {
+    await createSettingsWindow();
+  } else {
+    settingsWin.show();
   }
 });
 
-// Exit cleanly on request from parent process in development mode.
 if (isDevelopment) {
   if (process.platform === 'win32') {
     process.on('message', data => {
-      if (data === 'graceful-exit') {
-        app.quit();
-      }
+      if (data === 'graceful-exit') app.quit();
     });
   } else {
-    process.on('SIGTERM', () => {
-      app.quit();
-    });
+    process.on('SIGTERM', () => app.quit());
   }
 }
 
-type IpcListener = (event: IpcMainInvokeEvent, ...args: any[]) => any;
-
-/**
- * Forwards the event to all the windows
- * @returns a tuple of the channel name and the listener function
- */
-const sendPropsToAll = (channel: string): [string, IpcListener] => {
-  return [channel, (_, ...args) => wins.forEach(w => w.webContents.send(channel, ...args))];
+const forwardToOverlays = (channel: string) => {
+  ipcMain.handle(channel, (_, ...args) => {
+    overlayWins.forEach(w => w.webContents.send(channel, ...args));
+    if (settingsWin) {
+      settingsWin.webContents.send(channel, ...args);
+    }
+  });
 };
 
-/**
- * Custom events
- */
-ipcMain.handle('is-mouse-active', async (_, isMouseActive: boolean) => {
-  // If there's a keyBindDialog on the screen, we can't toggle,
-  // otherwise mouse events reset and it can't be clicked
-  if (!wins.length || keyBindDialog) return;
-  wins.forEach(w => w.setIgnoreMouseEvents(!isMouseActive));
+forwardToOverlays('change-overlay-speed');
+forwardToOverlays('change-play-status');
+forwardToOverlays('change-overlay-image');
+forwardToOverlays('change-interval');
+forwardToOverlays('change-pause');
+forwardToOverlays('setup-timers');
+
+ipcMain.handle('change-overlay-opacity', (_, opacity: number) => {
+  currentOpacity = opacity;
+  overlayWins.forEach(w => w.webContents.send('change-overlay-opacity', opacity));
 });
-ipcMain.handle(...sendPropsToAll('change-overlay-opacity'));
-ipcMain.handle(...sendPropsToAll('change-overlay-speed'));
-ipcMain.handle(...sendPropsToAll('change-play-status'));
-ipcMain.handle(...sendPropsToAll('change-overlay-image'));
-ipcMain.handle(...sendPropsToAll('change-interval'));
-ipcMain.handle(...sendPropsToAll('change-pause'));
-/**
- * Register menu open/close hotkey
- * We don't need to wait for all the windows as this is
- * invoked from main screen only
- */
+ipcMain.handle('get-current-opacity', () => {
+  return currentOpacity;
+});
+
 ipcMain.handle('change-hotkey', (_, keyBinds: ChangeKeyboardShortcut) => {
-  const { keyboardShortcutDisplay, keyboardShortcutElectron } = keyBinds;
+  const { keyboardShortcutElectron, keyboardShortcutDisplay } = keyBinds;
   if (oldKeyboardShortcut) globalShortcut.unregister(oldKeyboardShortcut);
   globalShortcut.register(keyboardShortcutElectron, () => {
-    wins.forEach(w => w.webContents.send('menu-hotkey-pressed'));
+    if (settingsWin) {
+      if (settingsWin.isVisible()) {
+        settingsWin.hide();
+      } else {
+        settingsWin.show();
+        settingsWin.focus();
+      }
+    }
   });
   oldKeyboardShortcut = keyboardShortcutElectron;
-  wins.forEach(w =>
-    w.webContents.send('change-hotkey', {
-      keyboardShortcutElectron,
-      keyboardShortcutDisplay,
-    }),
-  );
+  if (settingsWin) {
+    settingsWin.webContents.send('change-hotkey', { keyboardShortcutElectron, keyboardShortcutDisplay });
+  }
+});
+
+ipcMain.handle('minimize-settings-window', () => {
+    if (settingsWin) {
+        settingsWin.minimize();
+    }
 });
 ipcMain.handle('close-app', () => {
-  app.quit();
+    // @ts-ignore
+    app.isQuitting = true;
+    app.quit();
 });
 ipcMain.handle('open-keybind-dialog', createKeybindDialog);
 ipcMain.handle('close-keybind-dialog', () => {
-  if (keyBindDialog) keyBindDialog.close();
+    if (keyBindDialog) {
+        keyBindDialog.close();
+    }
+});
+ipcMain.handle('log', (_, loggable: any) => console.log(JSON.stringify(loggable)));
+
+// --- THIS IS THE FIX (PART 2) ---
+// New handler that waits for the signal from the renderer to show the window.
+ipcMain.handle('show-settings-window', () => {
+  if (settingsWin) {
+    settingsWin.show();
+  }
 });
 
-/**
- * Helper method called from frontend to log to the
- * terminal instead of enabling dev tools
- */
-ipcMain.handle('log', (_, loggable: any) => {
-  console.log(JSON.stringify(loggable));
-});
-
-/**
- * The listener is set up before the windows are loaded as promises
- * are lazy, so we won't miss it
- */
-const checkIfShouldShowScreen: Promise<boolean> = new Promise(resolve => {
-  ipcMain.handle('set-show-screen-this-time', (_, shouldShowScreenThisTime: boolean) => {
-    resolve(shouldShowScreenThisTime);
-  });
-});
-
-/**
- * If there is another instance running, focus the menu on the current one
- */
 const gotTheLock = app.requestSingleInstanceLock();
-
 if (!gotTheLock) app.quit();
 else {
   app.on('second-instance', () => {
-    wins.forEach(w => w.webContents.send('menu-hotkey-pressed'));
+    if (settingsWin) {
+      if (settingsWin.isMinimized()) settingsWin.restore();
+      settingsWin.show();
+      settingsWin.focus();
+    }
   });
 }
 
-/**
- * This method will be called when Electron has finished
- * initialization and is ready to create browser windows.
- * Some APIs can only be used after this event occurs.
- */
 app.on('ready', async () => {
-  // necessary to make the app transparent
-  await new Promise(r => setTimeout(r, 500));
-
   if (isDevelopment && !process.env.IS_TEST) {
-    // Install Vue Devtools
     try {
       await installExtension(VUEJS_DEVTOOLS);
     } catch (e) {
-      console.error('Vue Devtools failed to install:', e.toString());
+      console.error('Vue Devtools failed to install:', (e as Error).toString());
     }
   }
+
   for (const display of screen.getAllDisplays()) {
-    await createWindow(display);
+    await createOverlayWindow(display);
   }
-
-  wins.forEach(win => win.webContents.send('setup-timers'));
-
-  // We need to check this after we create all the windows
-  // So the event is passed to all of them.
-  // We do this to allow input when the window is not opened first
-  if (!(await checkIfShouldShowScreen)) setIgnoreMouseEvents(true);
+  
+  await createSettingsWindow();
+  
+  createTray();
 
   await autoUpdater.checkForUpdatesAndNotify();
 
-  wins.forEach(w => {
-    // Open links in default browser
-    w.webContents.on('new-window', (e, url) => {
+  if (settingsWin) {
+    settingsWin.webContents.on('new-window', (e, url) => {
       e.preventDefault();
       shell.openExternal(url);
     });
-
-    w.on('close', _ => {
-      // Remove window from list of windows
-      wins.splice(w.id - 1, 1);
-    });
-  });
+  }
 });
 
-// Flags needed on linux to make the overlay transparent
 if (process.platform === 'linux') {
   app.commandLine.appendSwitch('enable-transparent-visuals');
   app.commandLine.appendSwitch('disable-gpu');
   setInterval(() => {
-    // Hotfix for linux that does not place the window always on top
-    // Waiting for fix from electron
-    wins.forEach(w => !w.isDestroyed() && w.setAlwaysOnTop(true));
+    overlayWins.forEach(w => !w.isDestroyed() && w.setAlwaysOnTop(true));
   }, 300);
 }

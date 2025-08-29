@@ -1,16 +1,14 @@
 <template lang="pug">
   #app
-    div#static-wrapper(:style="staticStyles")
-
+    //- RESTORED: This component is the container for all the original CSS rules.
+    //- It is now locked in place to provide structure, not movement.
     vue-draggable-resizable#vue-draggable(
-      v-show="shouldShowScreen"
-      ref="vue-draggable"
-      :w="menu.w" 
-      :h="menu.h"
-      :x="menu.x" 
-      :y="menu.y"
-      :parent="true"
-      drag-handle=".drag-handle"
+      :w="600" 
+      :h="600"
+      :x="0" 
+      :y="0"
+      :draggable="false"
+      :resizable="false"
     )
       div.drag-handle.menu-top-bar
         .left-aligned
@@ -29,8 +27,8 @@
             @click="onPlayPauseButtonPress"
           ) Pause
         .right-aligned
-          button.button__traffic.button__traffic__minimize(@click="menuToggle()") –
-          button.button__traffic.button__traffic__close(@click="closeWindow()") x
+          button.button__traffic.button__traffic__minimize(@click="minimizeWindow()") –
+          button.button__traffic.button__traffic__close(@click="closeApp()") x
       div#menu
         .group
           label Choose background
@@ -117,162 +115,77 @@ const DEFAULT_SETTINGS: Settings = {
   showScreenNextTime: true,
 };
 
-const MENU_SIZE = {
-  WIDTH: 600,
-  HEIGHT: 600,
-};
-
 @Component({
-  components: {
-    VueSlider,
-    Checkbox,
-    Dropdown,
-  },
-  directives: {
-    ClickOutside,
-  },
+  components: { VueSlider, Checkbox, Dropdown },
+  directives: { ClickOutside },
 })
 export default class App extends Vue {
-  /** UI */
   MAX_SPEED = 20;
-  activeTimeout: NodeJS.Timer | null = null;
-  pauseTimeout: NodeJS.Timer | null = null;
-  isMenuOpen = false;
-  showScreenThisTime = false;
-  wasHotkeyPressed = false;
-  menu = {
-    w: MENU_SIZE.WIDTH,
-    h: MENU_SIZE.HEIGHT,
-    get x() {
-      return window.innerWidth / 2 - this.w / 2;
-    },
-    get y() {
-      return window.innerHeight / 2 - this.h / 2;
-    },
-  };
-  isPrimaryDisplay = new URLSearchParams(window.location.search).get('monitor-idx') === '1';
   backgroundImages = backgroundImagesData;
   isPaused = false;
   intervals = INTERVALS;
   pauses = PAUSES;
 
   privateSettings = ((): Settings => {
-    // Load saved settings
     const storedSettings = localStorage.getItem('settings');
     return storedSettings
       ? { ...DEFAULT_SETTINGS, ...JSON.parse(storedSettings) }
       : DEFAULT_SETTINGS;
   })();
 
-  get staticStyles(): StaticStylesInterface {
-    const { path, steps } = this.backgroundImages[this.settings.selectedImgIdx];
-    return {
-      '--static-background': `url(${path})`,
-      '--static-opacity': this.cssOpacity,
-      '--static-steps': steps,
-      '--static-animation-duration': this.overlayAnimationDuration + 's',
-    };
-  }
-
-  get settings(): Settings {
-    return this.privateSettings;
-  }
-
-  get activeTimeMs(): number {
-    return this.intervals[this.settings.selectedIntervalIdx].value * 60 * 1000;
-  }
-
-  get pauseTimeMs(): number {
-    return this.pauses[this.settings.selectedPauseIdx].value * 60 * 1000;
-  }
+  get settings(): Settings { return this.privateSettings; }
 
   set settings(settings) {
     this.privateSettings = settings;
     localStorage.setItem('settings', JSON.stringify(this.privateSettings));
   }
-
-  get cssOpacity(): number {
-    return this.isPaused ? 0 : this.settings.opacity / 200;
-  }
-
-  get overlayAnimationDuration(): string {
-    if (this.settings.speed === 0) return '0';
-    return ((this.MAX_SPEED + 1 - this.settings.speed) / 15).toFixed(1);
-  }
-
-  get shouldShowScreen(): boolean {
-    return (
-      (this.showScreenThisTime || this.wasHotkeyPressed) &&
-      this.isMenuOpen &&
-      this.isPrimaryDisplay
-    );
-  }
-
-  async menuToggle() {
-    await window.ipcRenderer.invoke('is-mouse-active', !this.isMenuOpen);
-
-    // Transition only for opening/closing
-    const compClasses = (this.$refs['vue-draggable'] as Vue).$el.classList;
-    compClasses.add('transition-active');
-    this.isMenuOpen = !this.isMenuOpen;
-    compClasses.remove('trasition-active');
-  }
+  
+  // --- START OF FIX ---
+  // All on...Change methods now update the local state immediately
+  // before sending the IPC message. This keeps the UI in sync.
 
   onIntervalChange(intervalIdx: number) {
+    this.settings = { ...this.settings, selectedIntervalIdx: intervalIdx };
     window.ipcRenderer.invoke('change-interval', intervalIdx);
   }
-
   onPauseChange(pauseIdx: number) {
+    this.settings = { ...this.settings, selectedPauseIdx: pauseIdx };
     window.ipcRenderer.invoke('change-pause', pauseIdx);
   }
-
   onOpacityChange(opacity: number) {
+    this.settings = { ...this.settings, opacity };
     window.ipcRenderer.invoke('change-overlay-opacity', opacity);
   }
-
   onSpeedChange(speed: number) {
+    this.settings = { ...this.settings, speed };
     window.ipcRenderer.invoke('change-overlay-speed', speed);
+  }
+  onBackgroundImgChange(idx: number) {
+    this.settings = { ...this.settings, selectedImgIdx: idx };
+    window.ipcRenderer.invoke('change-overlay-image', idx);
+  }
+  
+  // --- END OF FIX ---
+
+  onPlayPauseButtonPress() { window.ipcRenderer.invoke('change-play-status', !this.isPaused); }
+  openRegisterKeybindDialog() { window.ipcRenderer.invoke('open-keybind-dialog'); }
+  closeApp() { window.ipcRenderer.invoke('close-app'); }
+
+  minimizeWindow() {
+    window.ipcRenderer.invoke('minimize-settings-window');
   }
 
   onShowNextTimeChange(showScreenNextTime: boolean) {
     this.settings = { ...this.settings, showScreenNextTime };
   }
 
-  onBackgroundImgChange(idx: number) {
-    window.ipcRenderer.invoke('change-overlay-image', idx);
-  }
-
-  onPlayPauseButtonPress() {
-    window.ipcRenderer.invoke('change-play-status', !this.isPaused);
-  }
-
-  logToConsole(loggable: unknown) {
-    window.ipcRenderer.invoke('log', JSON.stringify(loggable));
-  }
-
-  openRegisterKeybindDialog() {
-    window.ipcRenderer.invoke('open-keybind-dialog');
-  }
-
-  closeWindow() {
-    window.ipcRenderer.invoke('close-app');
-  }
-
   updateSettings(params: Partial<Settings>) {
     this.settings = { ...this.settings, ...params };
   }
 
-  setUpHotkeyListener() {
-    window.ipcRenderer.on('menu-hotkey-pressed', () => {
-      // flag used for the showScreenThisTime routine
-      this.wasHotkeyPressed = true;
-      this.menuToggle();
-    });
-  }
 
-  /**
-   * Sets the hotkey for opening the menu
-   */
+  
+
   setUpHotkey() {
     const { keyboardShortcutElectron, keyboardShortcutDisplay } = this.settings;
     window.ipcRenderer.invoke('change-hotkey', {
@@ -281,53 +194,7 @@ export default class App extends Vue {
     });
   }
 
-  /**
-   * Checks if we show the config screen and ignores mouse events if we don't
-   */
-  initShowScreen() {
-    const { showScreenNextTime } = this.settings;
-
-    window.ipcRenderer.invoke('set-show-screen-this-time', showScreenNextTime);
-    if (showScreenNextTime) {
-      this.showScreenThisTime = true;
-      this.isMenuOpen = true;
-    }
-  }
-
-  startTimers() {
-    const startPauseTimer = () => {
-      this.pauseTimeout = setTimeout(() => {
-        this.isPaused = false;
-        startActiveTimer();
-      }, this.pauseTimeMs);
-    };
-    const startActiveTimer = () => {
-      if (!this.activeTimeMs) return;
-      this.activeTimeout = setTimeout(() => {
-        this.isPaused = true;
-        startPauseTimer();
-      }, this.activeTimeMs);
-    };
-    if (this.activeTimeout) clearTimeout(this.activeTimeout);
-    if (this.pauseTimeout) clearTimeout(this.pauseTimeout);
-    this.isPaused = false;
-    startActiveTimer();
-  }
-
   handleSettingsChanges() {
-    const eventsToListenTo = {
-      opacity: 'change-overlay-opacity',
-      speed: 'change-overlay-speed',
-      selectedImgIdx: 'change-overlay-image',
-      selectedPauseIdx: 'change-pause',
-    } as Record<keyof Settings, string>;
-
-    Object.entries(eventsToListenTo).forEach(([k, v]) => {
-      window.ipcRenderer.on(v, (_, setting) => {
-        this.updateSettings({ [k]: setting });
-      });
-    });
-
     window.ipcRenderer.on('change-play-status', (_, status: boolean) => {
       this.isPaused = status;
     });
@@ -335,42 +202,53 @@ export default class App extends Vue {
     window.ipcRenderer.on('change-hotkey', (_, keyBinds: ChangeKeyboardShortcut) => {
       this.updateSettings(keyBinds);
     });
-
-    window.ipcRenderer.on('change-interval', (_, selectedIntervalIdx: number) => {
-      this.updateSettings({ selectedIntervalIdx });
-      this.startTimers();
-    });
-  }
-
-  setUpTimer() {
-    window.ipcRenderer.on('setup-timers', () => {
-      window.ipcRenderer.invoke('change-pause', this.settings.selectedPauseIdx);
-      window.ipcRenderer.invoke('change-interval', this.settings.selectedIntervalIdx);
-    });
   }
 
   mounted() {
-    if (this.isPrimaryDisplay) {
-      // called only once from this display so we
-      // know we have the good one set up
-      this.setUpHotkey();
-      this.setUpHotkeyListener();
-      this.initShowScreen();
-      this.setUpTimer();
-    }
-
-    // those need to be handled in every BrowserWindow
+    this.setUpHotkey();
     this.handleSettingsChanges();
+    window.ipcRenderer.invoke('change-overlay-opacity', this.settings.opacity);
+    window.ipcRenderer.invoke('change-overlay-speed', this.settings.speed);
+    window.ipcRenderer.invoke('change-overlay-image', this.settings.selectedImgIdx);
+    window.ipcRenderer.invoke('setup-timers');
+     if (this.settings.showScreenNextTime) {
+      window.ipcRenderer.invoke('show-settings-window');
+    }
   }
 }
 </script>
 
 <style lang="scss">
-body {
-  margin: 0;
+// Global styles can remain
+body { 
+  margin: 0; 
 }
 </style>
 
 <style lang="scss" scoped>
+// The original scoped styles will now correctly apply to the restored component
 @import '@/assets/styles/main.scss';
+
+.menu-top-bar {
+  // Ensure the top bar is not showing a grab cursor since the OS handles dragging
+   -webkit-app-region: drag;
+
+  cursor: default !important;
+
+  user-select: none;
+
+}
+
+.menu-top-bar:active{
+    cursor: grabbing !important;
+}
+.menu-top-bar a,
+.menu-top-bar button {
+  -webkit-app-region: no-drag;
+}
+
+// The #app container should not have any special layout that might constrain the child
+#app {
+  overflow: hidden;
+}
 </style>

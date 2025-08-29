@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Visual Snow Overlay</title>
+    <style>
+      body, html {
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        background-color: transparent;
+      }
+      #static-wrapper {
+        /* These are the CSS variables that control the effect */
+        --static-background: url(assets/static1.gif);
+        --static-opacity: 0.04;
+        --static-steps: 1; /* RESTORED: Default steps for GIFs */
+        --static-animation-duration: 5s;
+
+        width: 100vw;
+        height: 100vh;
+        position: absolute;
+        top: 0;
+        left: 0;
+        opacity: var(--static-opacity);
+        background: var(--static-background);
+        animation-name: scrolling-static;
+        animation-duration: var(--static-animation-duration);
+        animation-iteration-count: infinite;
+
+        /* RESTORED: The crucial timing function that enables sprite sheet animation */
+        animation-timing-function: steps(var(--static-steps));
+      }
+      
+      /* This is the original animation, which scrolls the background image */
+      @keyframes scrolling-static {
+        from {
+          background-position: 0 0;
+        }
+        to {
+          /* This large value ensures the sprite sheet can be fully traversed */
+          background-position: -2500px 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="static-wrapper"></div>
+    <script>
+      const { ipcRenderer } = require('electron');
+      const wrapper = document.getElementById('static-wrapper');
+      
+      // This data structure needs to reflect the original, which included a 'steps' property.
+      // This is based on the original project's data. GIFs have 1 step, PNGs have more.
+      const backgroundImages = [
+        { path: 'assets/static1.png', steps: 5 },
+        { path: 'assets/static2.png', steps: 7 },
+        { path: 'assets/static4.png', steps: 4 },
+        { path: 'assets/static6.png', steps: 3 },
+        { path: 'assets/static3.png', steps: 10 },
+      ];
+
+      let isPaused = false;
+
+      ipcRenderer.on('change-overlay-opacity', (event, opacity) => {
+        if (!isPaused) {
+            wrapper.style.setProperty('--static-opacity', opacity / 200);
+        }
+      });
+      
+      // This now correctly controls the duration of the steps() animation
+      ipcRenderer.on('change-overlay-speed', (event, speed) => {
+        const duration = speed === 0 ? '0s' : ((20 - speed) / 15).toFixed(2) + 's';
+        wrapper.style.setProperty('--static-animation-duration', duration);
+      });
+
+      // This listener now correctly updates both the image AND the number of animation steps
+      ipcRenderer.on('change-overlay-image', (event, idx) => {
+        const { path, steps } = backgroundImages[idx];
+        wrapper.style.setProperty('--static-background', `url(${path})`);
+        // RESTORED: This line is critical for switching between GIF and PNG animation
+        wrapper.style.setProperty('--static-steps', steps.toString());
+      });
+
+      ipcRenderer.on('change-play-status', (event, pausedStatus) => {
+        isPaused = pausedStatus;
+        if (isPaused) {
+            wrapper.style.setProperty('--static-opacity', '0');
+        } else {
+            ipcRenderer.invoke('get-current-opacity').then(opacity => {
+                 wrapper.style.setProperty('--static-opacity', opacity / 200);
+            });
+        }
+      });
+    </script>
+  </body>
+</html>

@@ -8,6 +8,7 @@
     "build": "vue-cli-service build",
     "lint": "vue-cli-service lint",
     "electron:serve": "vue-cli-service electron:serve",
+    "dev": "electron .",
     "electron:build": "vue-cli-service electron:build",
     "electron:build:windows": "vue-cli-service electron:build --windows",
     "electron:publish": "vue-cli-service electron:build -p always",
@@ -26,8 +27,8 @@
     "vue": "^2.6.12",
     "vue-click-outside": "^1.1.0",
     "vue-draggable-resizable": "^2.2.0",
-    "vue-property-decorator": "^8.4.2",
-    "vue-slider-component": "^3.2.11",
+    "vue-property-decorator": "^8.5.1",
+    "vue-slider-component": "^3.2.24",
     "vue-toasted": "^1.1.28",
     "vuex": "^3.1.2"
   },
@@ -42,7 +43,8 @@
     "@vue/cli-service": "^4.5.9",
     "@vue/eslint-config-prettier": "^5.0.0",
     "@vue/eslint-config-typescript": "^4.0.0",
-    "electron": "^11.3.0",
+    "concurrently": "^9.2.1",
+    "electron": "^14.0.0",
     "electron-devtools-installer": "^3.1.0",
     "electron-icon-builder": "^1.0.2",
     "eslint": "^5.16.0",
@@ -57,9 +59,6 @@
     "vue-cli-plugin-electron-builder": "^2.1.1",
     "vue-template-compiler": "^2.6.12",
     "vuex-module-decorators": "^1.0.1"
-  },
-  "resolutions": {
-    "vue-cli-plugin-electron-builder/electron-builder": "23.6.0"
   },
   "husky": {
     "hooks": {
